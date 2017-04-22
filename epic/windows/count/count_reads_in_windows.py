@@ -6,6 +6,8 @@ from subprocess import check_output, Popen, PIPE
 from typing import Any, Iterable, Tuple
 from argparse import Namespace
 
+import pysam
+
 import pandas as pd
 from joblib import Parallel, delayed
 from numpy import int32
@@ -65,18 +67,43 @@ def _count_reads_in_windows(bed_file, args, chromosome_size,
     # type: (str, Namespace, int, str, str) -> pd.DataFrame
 
     halved_fragment_size = args.fragment_size // 2
-    idx = 1 if strand == "+" else 2  # fragment start indices
+    out_table = None
+    if args.bam:
+        meth_start = "reference_start"
+        sign = +1
+        if strand == "-":
+            meth_start = "reference_end"
+            sign = -1
 
-    grep, duplicate_handling = _options(bed_file, args.keep_duplicates)
+        bam = pysam.AlignmentFile(bed_file, "rb")
+        iter = bam.fetch(chromosome, multiple_iterators=True)
+        bins_count = {}
+        #info(("## _count_reads_in_windows_count_reads_in_windows chr={} strand={}").format(chromosome, strand))
+        for aln in iter:
+            read_strand = "-"  if aln.flag & 0x16 != 0 else "+"
+            if read_strand != strand:
+                continue
+            pos = getattr(aln, meth_start) + sign *  halved_fragment_size
+            pos -= (pos % args.window_size)
+            bins_count[pos] = bins_count.get(pos, 0) + 1
 
-    command = (
-        "{grep} -E '^{chromosome}\\b.*\\{strand}$' {bed_file} | "
-        "cut -f 1-3,6 - | sort -k2,3n | {duplicate_handling} "
-        "LC_ALL=C perl -a -ne '$F[{idx}]{strand}={halved_fragment_size};"  # shift fragments
-        "$F[{idx}]=$F[{idx}]-($F[{idx}] % {window_size});"  # turn exact start into bin
-        "print \"@F[0,{idx}]\n\"' | "
-        "uniq -c | "
-        "sed -e 's/^[ ]*//'").format(grep=grep,
+        bins_count_sorted = sorted(bins_count.items(), key=lambda x: x[0])
+        out_table = pd.DataFrame({bed_file:[pair[1] for pair in bins_count_sorted],
+                                  "Chromosome":chromosome,
+                                  "Bin":[pair[0] for pair in bins_count_sorted]})
+    else :
+        idx = 1 if strand == "+" else 2  # fragment start indices
+
+        grep, duplicate_handling = _options(bed_file, args.keep_duplicates)
+
+        command = (
+            "{grep} -E '^{chromosome}\\b.*\\{strand}$' {bed_file} | "
+            "cut -f 1-3,6 - | sort -k2,3n | {duplicate_handling} "
+            "LC_ALL=C perl -a -ne '$F[{idx}]{strand}={halved_fragment_size};"  # shift fragments
+            "$F[{idx}]=$F[{idx}]-($F[{idx}] % {window_size});"  # turn exact start into bin
+            "print \"@F[0,{idx}]\n\"' | "
+            "uniq -c | "
+            "sed -e 's/^[ ]*//'").format(grep=grep,
                                      chromosome=chromosome,
                                      strand=strand,
                                      bed_file=bed_file,
@@ -85,13 +112,13 @@ def _count_reads_in_windows(bed_file, args, chromosome_size,
                                      halved_fragment_size=halved_fragment_size,
                                      window_size=args.window_size)
 
-    output = check_output(command, shell=True)
+        output = check_output(command, shell=True)
 
-    out_table = pd.read_table(
-        BytesIO(output),
-        header=None,
-        sep=" ",
-        names=[bed_file, "Chromosome", "Bin"])
+        out_table = pd.read_table(
+            BytesIO(output),
+            header=None,
+            sep=" ",
+            names=[bed_file, "Chromosome", "Bin"])
 
     out_table = remove_out_of_bounds_bins(out_table, chromosome_size)
 

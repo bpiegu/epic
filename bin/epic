@@ -5,6 +5,7 @@ from __future__ import print_function
 from collections import OrderedDict
 import argparse
 import os
+import sys
 import atexit
 from subprocess import call
 
@@ -157,6 +158,13 @@ parser.add_argument('--paired-end',
                     action="store_true",
                     help='''Use paired end data (bedpe).''')
 
+parser.add_argument(
+    '--bam',
+    required=False,
+    action="store_true",
+    help='''Input are bam files rather than bed files.'''
+)
+
 parser.add_argument('--version',
                     '-v',
                     action='version',
@@ -184,19 +192,35 @@ warnings.filterwarnings("ignore",
                         category=UserWarning,
                         module="rpy2")  # rpy2 is noisy
 
-if __name__ == '__main__':
+def test_files_existence(files_list):
+    file_err = 0
+    for file in files_list:
+        if not os.path.exists(file):
+            logging.error(("#file {} doesn't exist").format(file))
+            file_err += 1
+    return file_err
 
+
+if __name__ == '__main__':
 
     args = parser.parse_args()
     print("# epic " + " ".join(argv[1:]))
     logging.info("# epic " + " ".join(argv[
-        1:]) + " # epic_version: {}, pandas_version: {}".format(
+        1:]) + "\n# epic_version: {}, pandas_version: {}".format(
             __version__, pd.__version__))
 
     from sys import argv
 
     from epic.run.run_epic import run_epic
     from epic.config import logging_settings
+
+    if args.bam and args.paired_end:
+        logging.error("Currently epic can't process paired bam files\n ... You must convert your paired bam files in bed files\n")
+        sys.exit(1)
+    file_err = test_files_existence(args.treatment+args.control)
+    if args.bam:
+        file_err += test_files_existence([f + ".bai" for f in args.treatment])
+    if file_err: sys.exit(2)
 
     # in case the user entered no effective genome size
     if not args.effective_genome_size and not args.paired_end:
@@ -207,8 +231,7 @@ if __name__ == '__main__':
     # for paired end the effective genome size is max
     elif not args.effective_genome_size and args.paired_end:
         logging.info("Using paired end so setting readlength to 100.")
-        args.effective_genome_size = get_effective_genome_length(args.genome,
-                                                                 100)
+        args.effective_genome_size = get_effective_genome_length(args.genome, 100)
 
     if not args.chromsizes:
         args.chromosome_sizes = create_genome_size_dict(args.genome)

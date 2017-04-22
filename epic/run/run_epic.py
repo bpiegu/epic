@@ -3,7 +3,7 @@
 __author__ = "Endre Bakken Stovner https://github.com/endrebak/"
 __license__ = "MIT"
 
-from os.path import dirname, join, basename
+from os.path import dirname, join, basename, exists
 from sys import stdout
 from itertools import chain
 from collections import OrderedDict
@@ -30,7 +30,6 @@ from epic.matrixes.matrixes import write_matrix_files
 
 def run_epic(args):
     # type: (Namespace) -> pd.DataFrame
-
     chip_windows = multiple_files_count_reads_in_windows(args.treatment, args)
     input_windows = multiple_files_count_reads_in_windows(args.control, args)
 
